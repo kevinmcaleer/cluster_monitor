@@ -8,6 +8,7 @@ from plasma import plasma_stick, plasma2040
 from breakout_bme280 import BreakoutBME280
 from pimoroni_i2c import PimoroniI2C
 import json
+from colour import hex2rgb, hsv2hex, rgb2hex, rgb2hsv, hsv2rgb
 
 I2C_PINS = {"sda": 20, "scl": 21}
 
@@ -16,6 +17,8 @@ bme = BreakoutBME280(i2c)
 
 MQTT_BROKER = "192.168.1.152"
 CLIENT_ID = "cluster monitor"
+
+COLOUR = "FF0000"
 
 # LED Strip setup
 brightness = 0.25 # Set the overall brightness
@@ -46,9 +49,10 @@ def connect_wifi():
 wlan = connect_wifi()
 
 MQTT_BROKER = "192.168.1.152"
-CLIENT_ID = "burgerbot"
-topic = "cluster/colour"
-status_topic = "cluster/status"
+CLIENT_ID = "cluster monitor"
+COLOUR_TOPIC = "cluster/colour"
+STATUS_TOPIC = "cluster/status"
+RGB_TOPIC = "cluster/rgb"
 
 led = Pin("LED", Pin.OUT)
 led.on()
@@ -58,29 +62,52 @@ RED = 0.0
 BLUE = 0.6
 YELLOW = 0.16
 
-def warning():
-    print("WARNING")
-    hue = YELLOW
+def set_colour():
+    global COLOUR
+    global brightness
+    r,g,b = hex2rgb(COLOUR)
+    hue, saturation, value = rgb2hsv(r,g,b)
+#     brightness = value
+    print(f'R:{r}, G:{g}, B:{b}, hue: {hue}, sat: {saturation}, brightness: {brightness}, hex: {COLOUR}')
     for i in range(NUM_LEDS):
-        led_strip.set_hsv(i, hue, 1.0, brightness)
+        led_strip.set_hsv(i, hue, saturation, brightness)
+
+def warning():
+    global COLOUR
+    print("WARNING")
+    COLOUR =  hsv2hex(YELLOW, 1.0, brightness)
+    set_colour()
 
 def alert():
+    global COLOUR
     print("ALERT")
-    hue = RED
-    for i in range(NUM_LEDS):
-        led_strip.set_hsv(i, hue, 1.0, brightness)
+    COLOUR =  hsv2hex(RED, 1.0, brightness)
+    set_colour()
 
 def normal():
+    global COLOUR
     print("NORMAL")
-    hue = BLUE
-    for i in range(NUM_LEDS):
-        led_strip.set_hsv(i, hue, 1.0, brightness)
+    COLOUR =  hsv2hex(BLUE, 1.0, brightness)
+    set_colour()
 
 def green():
     print("GREEN")
-    hue = GREEN
-    for i in range(NUM_LEDS):
-        led_strip.set_hsv(i, hue, 1.0, brightness)
+    global COLOUR
+    COLOUR =  hsv2hex(GREEN, 1.0, brightness)
+    set_colour()
+
+def set_rgb(payload):
+    global COLOUR
+    payload = payload.replace("rgb(","")
+    payload = payload.replace(")","")
+    r,g,b = payload.split(",")
+    r = int(r)
+    g = int(g)
+    b = int(b)
+    print(f"r:{r}, g:{g}, b:{b}")
+    print(f"RGB {r}, {g}, {b}")
+    COLOUR = rgb2hex(r,g,b)
+    set_colour()
 
 def sub_cb(topic, msg):
     global brightness
@@ -92,6 +119,10 @@ def sub_cb(topic, msg):
      
     print(f'topic {topic}, msg {msg}')
     
+    if topic == RGB_TOPIC:
+        payload = msg
+        set_rgb(payload)
+
     if 'alert' in msg:
         print(f"alert {msg}")
         alert()
@@ -112,17 +143,19 @@ def sub_cb(topic, msg):
         payload = json.loads(msg)
         
         print(f"brightness set to {brightness}")
-        brightness = float(payload["brightness"]) 
+        brightness = float(payload["brightness"])
+        set_colour()
 
 def connect_and_subscribe():
     """ Connect to the MQTT broker and subscribe to the topic"""
     global CLIENT_ID, MQTT_BROKER
     
-    print(CLIENT_ID, MQTT_BROKER, topic, )
+    print(CLIENT_ID, MQTT_BROKER, COLOUR_TOPIC, )
     client = MQTTClient(CLIENT_ID, MQTT_BROKER, keepalive=30)
     client.set_callback(sub_cb)
     client.connect()
-    client.subscribe(topic)
+    client.subscribe(COLOUR_TOPIC)
+    client.subscribe(RGB_TOPIC)
     
     return client
 
@@ -139,10 +172,11 @@ def take_reading(client):
     humidity = round(reading[2],1)
     msg = json.dumps({'temperature': temp,
            'pressure': pressure,
-           'humidity': humidity})
-    print(f'BME Reading: {msg}')
-    print(f'topic is {status_topic}')
-    client.publish(status_topic, msg)
+           'humidity': humidity,
+           'hex': COLOUR})
+#     print(f'BME Reading: {msg}')
+#     print(f'topic is {STATUS_TOPIC}')
+    client.publish(STATUS_TOPIC, msg)
 
 # Connect to wifi
 timer = ticks_ms()
@@ -171,7 +205,7 @@ while True:
         if current_time >= (timer + 1000):
             timer = ticks_ms()
             take_reading(client)
-            print(timer, current_time)
+#             print(timer, current_time)
             led.toggle()
             
     except OSError as e:
